@@ -1,15 +1,18 @@
+import gc
 import os
+import time
 from glob import glob
 
 import numpy as np
 import rasterio as rio
 import xarray as xr
-from rasterio.transform import from_origin
-import time
 from joblib import Parallel, delayed
-from nasa_utils import get_modis_files_to_download, get_nasa_data, SessionWithHeaderRedirection, create_netrc, get_nsidc_files_to_download
+from nasa_utils import (SessionWithHeaderRedirection, create_netrc,
+                        get_modis_files_to_download, get_nasa_data,
+                        get_nsidc_files_to_download)
+from rasterio.transform import from_origin
 from utility import merge_tile_data, warp_to_wgs84, write_array_tif
-import gc
+
 path = '.'
 
 # def _create_doy(year, doy):
@@ -28,13 +31,11 @@ def driver(year, doy, user, passwd, sat='MOLA'):
 
     if sat is 'MOLA' or sat is 'MOTA':
         s = 'MOTA'
-        p1 = 'MCD43A1.006'
-        p2 = 'MCD43A3.006'
+        p1 = 'MOD15A2H.006'
         ext='.hdf'
     else:
         s = 'VIIRS'
-        p1 = 'VNP43IA1.001'
-        p2 = 'VNP43IA3.001'
+        p1 = 'VNP15A2H.001'
         ext='.h5'
 
     #ESTABLISH NASA PASSWORD AND USER
@@ -44,10 +45,6 @@ def driver(year, doy, user, passwd, sat='MOLA'):
 
     mcd43a1_path = os.path.join(os.getcwd(), '{}_{}_{}{}.tif'.format(
         s, p1, year, str(doy).zfill(3)))
-    mcd43a3_path = os.path.join(os.getcwd(), '{}_{}_{}{}.tif'.format(
-        s, p2, year, str(doy).zfill(3)))
-    mod10a2_path = os.path.join(os.getcwd(), '{}_{}_{}{}.tif'.format('MOSA','MOD10A2.006',year,str(doy).zfill(3)))
-
     if not os.path.exists(mcd43a1_path.replace('.tif','.nc')) and not os.path.exists(mcd43a3_path.replace('.tif','.nc')):
         output_path = './'
         print('###################################################')
@@ -60,28 +57,6 @@ def driver(year, doy, user, passwd, sat='MOLA'):
             else:
                 print('{} {} is all downloaded ......'.format(s,p1))
                 break
-#        basenames_a1 = glob('VNP43IA1*.h5')
-        print('###################################################')
-        print('Downloading {} {} Tiles for: {}'.format(s,p2,doy))
-        print("###################################################")
-        for i in range(4):
-            fns, basenames_a2 = get_modis_files_to_download(year, doy, None, output_path, ext, sat=s,product=p2)
-            if len(fns) > 0:
-                Parallel(n_jobs=5,verbose=10)(delayed(download)(user,passwd,fn) for fn in fns)
-            else:
-                print('{} {} is all downloaded ......'.format(s,p2))
-                break
- #       basenames_a2 = glob('VNP43IA3*.h5')
-        print('###################################################')
-        print('Downloading {} {} Tiles for: {}'.format(s,p2,doy))
-        print("###################################################")
-        for i in range(4):
-            fns, basenames_a3 = get_nsidc_files_to_download(year, doy, user,passwd, ext='hdf', sat='MOST',product='MOD10A2.006')
-            if len(fns) > 0:
-                Parallel(n_jobs=5,verbose=10)(delayed(download)(user,passwd,fn) for fn in fns)
-            else:
-                print('{} {} is all downloaded ......'.format(s,p2))
-                break
 
 
         #check for tiff tiles already created
@@ -91,24 +66,9 @@ def driver(year, doy, user, passwd, sat='MOLA'):
         tiffnames1 = [fname.replace(ext,'.tif') for fname in basenames_a1]
 #        print(tiffnames1,basenames_a1)
         if s == 'VIIRS':
-            Parallel(n_jobs=24,verbose=10)(delayed(_convert_hdf_tif_vnp43ia1)(hdf,tif) for hdf,tif in zip(basenames_a1,tiffnames1))
+            Parallel(n_jobs=24,verbose=10)(delayed(_convert_hdf_tif_vnp15A2H)(hdf,tif) for hdf,tif in zip(basenames_a1,tiffnames1))
         else:
-            Parallel(n_jobs=24,verbose=10)(delayed(_convert_hdf_tif_mcd43a1)(hdf,tif) for hdf,tif in zip(basenames_a1,tiffnames1))
-        gc.collect()
-        print('################################################')
-        print('          Writing {} to TIFs'.format(p2))
-        print('################################################')
-        tiffnames3 = [fname.replace(ext,'.tif') for fname in basenames_a2]
-        if s == 'VIIRS':
-            Parallel(n_jobs=24,verbose=10)(delayed(_convert_hdf_tif_vnp43ia3)(hdf,tif) for hdf,tif in zip(basenames_a2,tiffnames3))
-        else:
-            Parallel(n_jobs=24,verbose=10)(delayed(_convert_hdf_tif_mcd43a3)(hdf,tif) for hdf,tif in zip(basenames_a2,tiffnames3))
-        gc.collect()
-        print('################################################')
-        print('          Writing MOD10A2 to TIFs')
-        print('################################################')
-        tiffnamesnow = [fname.replace('.hdf','.tif') for fname in basenames_a3]
-        Parallel(n_jobs=24,verbose=10)(delayed(_convert_hdf_tif_mod10a2)(hdf,tif) for hdf,tif in zip(basenames_a3,tiffnamesnow))
+            Parallel(n_jobs=24,verbose=10)(delayed(_convert_hdf_tif_mod15A2H)(hdf,tif) for hdf,tif in zip(basenames_a1,tiffnames1))
         gc.collect()
         print('################################################')
         print('          WARPING {} TIF Files'.format(p1))
@@ -117,18 +77,6 @@ def driver(year, doy, user, passwd, sat='MOLA'):
         Parallel(n_jobs=12,verbose=10)(delayed(warp_to_wgs84)(fname) for fname in tiffnames1)
 
         print('################################################')
-        print('          WARPING {} TIF Files'.format(p2))
-        print('################################################')
-        tiffwarp3 = [fname.replace('.tif','_warped.tif') for fname in tiffnames3]
-        Parallel(n_jobs=12,verbose=10)(delayed(warp_to_wgs84)(fname) for fname in tiffnames3)
-        gc.collect()
-        print('################################################')
-        print('          WARPING MOD10A2 TIF Files')
-        print('################################################')
-        tiffwarpsnow = [fname.replace('.tif','_warped.tif') for fname in tiffnamesnow]
-        Parallel(n_jobs=12,verbose=10)(delayed(warp_to_wgs84)(fname) for fname in tiffnamesnow)
-        gc.collect()
-        print('################################################')
         print('        Merging {} Warped TIFS to File'.format(p1))
         print('################################################')
         pp = p1.split('.')[0] + '.A'
@@ -136,29 +84,15 @@ def driver(year, doy, user, passwd, sat='MOLA'):
         tiffm1 = glob('{}{}{}.*_warped.tif'.format(pp,year, str(doy).zfill(3)))
         merge_tile_data(tiffm1, mcd43a1_path)
         gc.collect()
-        print('################################################')
-        print('        Merging {} Warped TIFS to File'.format(p2))
-        print('################################################')
-        pp = p2.split('.')[0] + '.A'
-        tiffm3 = [fname.replace('.tif','_warped.tif') for fname in tiffnames3]
-        tiffm3 = glob('{}{}{}.*_warped.tif'.format(pp,year, str(doy).zfill(3)))
-        merge_tile_data(tiffm3, mcd43a3_path)
-        gc.collect()
-        print('################################################')
-        print('        Merging MOD10A2 Warped TIFS to File')
-        print('################################################')
-        pp = 'MOD10A2.A'
-        tiffmsnow = [fname.replace('.tif','_warped.tif') for fname in tiffnamesnow]
-        tiffmsnow = glob('{}{}{}.*_warped.tif'.format(pp,year, str(doy).zfill(3)))
-        merge_tile_data(tiffmsnow, mod10a2_path)
-        gc.collect()
+
         print('################################################')
         print('        Cleaning Up Files....')
         print('################################################')
 #        files = glob('{}.A{}{}.*.tif'.format(year, str(doy).zfill(3)))
-        Parallel(n_jobs=12,verbose=10)(delayed(os.remove)(fname) for fname in files)
+        Parallel(n_jobs=12,verbose=10)(delayed(os.remove)(fname) for fname in basenames_a1)
+        Parallel(n_jobs=12,verbose=10)(delayed(os.remove)(fname) for fname in tiffnames1)
 #        files =	glob('{}.A{}{}.*.tif'.format(p2.plyear, str(doy).zfill(3)))
-        Parallel(n_jobs=12,verbose=10)(delayed(os.remove)(fname) for fname in files)
+        Parallel(n_jobs=12,verbose=10)(delayed(os.remove)(fname) for fname in tiffwarp1)
 
         # Print Cleaning up HDF files
         print('################################################')
@@ -168,36 +102,16 @@ def driver(year, doy, user, passwd, sat='MOLA'):
         #        Parallel(n_jobs=10,verbose=10)(delayed(os.remove)(fname) for fname in basenames_a2)
 
         # write to netcdf
-        nbar = xr.open_rasterio(mcd43a1_path)
-        albedo = xr.open_rasterio(mcd43a3_path)
-        wn = calc_wn(albedo, nbar)
-        wns = calc_wns(wn)
+        lai = xr.open_rasterio(mcd43a1_path)
 
-        snow = xr.open_rasterio(mod10a2_path)
-        bs_map = calc_bsmap(wns, snow)
-
-        bs_map_low = bs_map.where(bs_map > 0).where(bs_map <= .2).fillna(-999)
-        bs_map_med = bs_map.where(bs_map > 0.2).where(bs_map <= 0.6).fillna(-999)
-        bs_map_hig = bs_map.where(bs_map > 0.6).where(bs_map <= 1).fillna(-999)
-
-        das = dict(shadow=wn,
-                   wns=wns,
-                   #               drag=rt,
-                   #               usuf=usuf,
-                   #               utuf=utuf,
-                   #               z0=z0,
-                   snow=snow,
-                   bs_map=bs_map,
-                   bs_map1=bs_map_low,
-                   bs_map2=bs_map_med,
-                   bs_map3=bs_map_hig)
+        das = dict(lai=lai)
         ds = xr.Dataset(das)
 
         ds['time'] = date
         ds = ds.expand_dims('time').set_coords('time')
         write_ncf(ds,mcd43a3_path.replace('.tif','.nc')
 
-    return mcd43a3_path.replace('.tif','.nc')
+    return mcd43a1_path.replace('.tif','.nc')
 
 
 def write_ncf(dset,output_name):
@@ -298,7 +212,7 @@ def _modis_hv_extent(fname):
     uly = -10007554.677 + (18 - v) * 1111950.5196666666
     res = 463.312716527917
 
-def _convert_hdf_tif_vnp43ia1(hdf_file_name,tif_file_name):
+def _convert_hdf_tif_vnp15A2H(hdf_file_name,tif_file_name):
     crs = '+proj=sinu +lon_0=0 +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs'
     tile = hdf_file_name.split(".")[2]
     h = int(tile[1:3])
@@ -311,7 +225,7 @@ def _convert_hdf_tif_vnp43ia1(hdf_file_name,tif_file_name):
     if len(s.subdatasets) < 1:
         iso = s.read().squeeze()
     else:
-        band = [i for i in s.subdatasets if 'BRDF_Albedo_Parameters_I1' in i][0]
+        band = [i for i in s.subdatasets if 'Lai' in i][0]
         iso = rio.open(band).read()[:,:,0].squeeze()
     write_array_tif(iso, crs, transform, tif_file_name)
 
