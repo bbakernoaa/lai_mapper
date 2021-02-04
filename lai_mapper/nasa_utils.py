@@ -124,7 +124,11 @@ def get_modis_files_to_download(year,
     files_on_system = [
         os.path.isfile("{}/{}".format(output_path, f)) for f in basenames
     ]
-    files_to_download = array(files)[~array(files_on_system)]
+    print(files_on_system)
+    if array(files_on_system).size > 0:
+        files_to_download = array(files)[~array(files_on_system)]
+    else:
+        files_to_download = array(files)
     return files_to_download, basenames
 
 

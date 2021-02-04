@@ -6,9 +6,8 @@ import gc
 import os
 from subprocess import run
 
-import bsprocessor
-import hlprocessor
-import make_map
+import laiprocessor
+#import make_map
 import nasa_utils as nu
 import pandas as pd
 import xarray as xr
@@ -35,18 +34,19 @@ def write_ncf(dset, output_name):
     final.to_netcdf(output_name, encoding=encoding)
 
 
-def main_bsprocessor(dates, user, passwd, sat):
+def main_laiprocessor(dates, user, passwd, sat):
+    #VIIRS_VNP15A2H.001_2019329.nc
     if sat == 'VIIRS':
-        product = 'VNP43IA1.001'
+        product = 'VNP15A2H.001'
     else:
-        product = 'MCD43A1.006'
+        product = 'MCD15A2H.006'
 
 
 #    print(dates)
 #    print(sat,product)
-#    avail_dates = nu.get_modis_available_days(dates,sat=sat, product=product)
-#    print(avail_dates)
-    for day in dates:  #avail_dates:
+    avail_dates = nu.get_modis_available_days(dates,sat=sat, product=product)
+    print(avail_dates)
+    for day in avail_dates:#dates:  #avail_dates:
         year = day.strftime('%Y')
         doy = day.strftime('%j').zfill(3)
         print(
@@ -56,33 +56,37 @@ def main_bsprocessor(dates, user, passwd, sat):
         print(
             '#########################################################################'
         )
-        ssm_path = bsprocessor.driver(day.strftime('%Y'),
+        try:
+            yyyymmdd = day.strftime('%Y%m%d')
+            testfile = '{}_{}_{}.nc'.format(sat,product,yyyymmdd)
+            if os.path.isfile(testfile):
+                print('file exists moving on')
+            else:
+                ssm_path = laiprocessor.driver(day.strftime('%Y'),
                                       day.strftime('%j'),
                                       user,
                                       passwd,
                                       sat=sat)
+        except:
+            print('proceeding....')
 
+            
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description='download and gridding MODIS data',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('-y',
-                        '--year',
-                        type=int,
-                        default=None,
-                        help='year of dataset')
     parser.add_argument(
         '-s',
         '--start_doy',
-        type=int,
+        type=str,
         default=None,
-        help='start day of processing. *Note: leave blank for Real-time')
+        help='start day of processing. *Note: leave blank for Real-time format YYYY-mm-dd')
     parser.add_argument(
         '-e',
         '--end_doy',
-        type=int,
+        type=str,
         default=None,
-        help='end day of processing. *Note: leave blank for Real-time')
+        help='end day of processing. *Note: leave blank for Real-time: format YYYY-mm-dd')
     parser.add_argument('-u',
                         '--user',
                         default='barrybaker',
@@ -99,16 +103,17 @@ if __name__ == "__main__":
 
     start_doy = args.start_doy
     end_doy = args.end_doy
-
-    start = pd.to_datetime('{}{}'.format(str(args.year),
-                                         str(start_doy).zfill(3)),
-                           format='%Y%j')
-    end = pd.to_datetime('{}{}'.format(str(args.year),
-                                       str(end_doy).zfill(3)),
-                         format='%Y%j')
+    start = pd.to_datetime(start_doy)
+    end = pd.to_datetime(end_doy)
+#    start = pd.to_datetime('{}{}'.format(str(args.year),
+#                                         str(start_doy).zfill(3)),
+#                           format='%Y%j')
+#    end = pd.to_datetime('{}{}'.format(str(args.year),
+#                                       str(end_doy).zfill(3)),
+#                         format='%Y%j')
 
     dates = pd.date_range(start=start, end=end)
-    main_bsprocessor(dates=dates,
+    main_laiprocessor(dates=dates,
                      user=args.user,
                      passwd=args.password,
                      sat=args.satellite)

@@ -2,33 +2,26 @@ import gc
 import os
 import time
 from glob import glob
-
+import rioxarray
+from rioxarray.merge import merge_arrays
 import numpy as np
 import rasterio as rio
 import xarray as xr
+import pandas as pd
 from joblib import Parallel, delayed
 from nasa_utils import (SessionWithHeaderRedirection, create_netrc,
                         get_modis_files_to_download, get_nasa_data,
                         get_nsidc_files_to_download)
 from rasterio.transform import from_origin
+from rasterio.warp import Resampling
 from utility import merge_tile_data, warp_to_wgs84, write_array_tif
 
 path = '.'
 
-# def _create_doy(year, doy):
-#     import numpy as np
-#     day4_list = np.arange(1, 366, 8)
-#     try:
-#         doy = int(day4_list[day4_list < doy][-1])
-#     except:
-#         doy = int(day4_list[0])
-#     return doy
-
-
 def driver(year, doy, user, passwd, sat='MOLA'):
-
+    
     region=None
-
+    
     if sat is 'MOLA' or sat is 'MOTA':
         s = 'MOTA'
         p1 = 'MOD15A2H.006'
@@ -37,15 +30,16 @@ def driver(year, doy, user, passwd, sat='MOLA'):
         s = 'VIIRS'
         p1 = 'VNP15A2H.001'
         ext='.h5'
-
+        
     #ESTABLISH NASA PASSWORD AND USER
     session = SessionWithHeaderRedirection(user,passwd)
     #make sure user has .netrc file in home directory
     create_netrc(user,passwd)
 
-    mcd43a1_path = os.path.join(os.getcwd(), '{}_{}_{}{}.tif'.format(
-        s, p1, year, str(doy).zfill(3)))
-    if not os.path.exists(mcd43a1_path.replace('.tif','.nc')) and not os.path.exists(mcd43a3_path.replace('.tif','.nc')):
+
+    target_crs = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
+    mcd43a1_path = os.path.join(os.getcwd(), '{}_{}_{}{}.tif'.format(s, p1, year, str(doy).zfill(3)))
+    if not os.path.exists(mcd43a1_path.replace('.tif','.nc')):
         output_path = './'
         print('###################################################')
         print('Downloading {} {} Tiles for: {}'.format(s,p1,doy))
@@ -57,8 +51,8 @@ def driver(year, doy, user, passwd, sat='MOLA'):
             else:
                 print('{} {} is all downloaded ......'.format(s,p1))
                 break
-
-
+            
+            
         #check for tiff tiles already created
         print('################################################')
         print('          Writing {} to TIFs'.format(p1))
@@ -66,94 +60,93 @@ def driver(year, doy, user, passwd, sat='MOLA'):
         tiffnames1 = [fname.replace(ext,'.tif') for fname in basenames_a1]
 #        print(tiffnames1,basenames_a1)
         if s == 'VIIRS':
-            Parallel(n_jobs=24,verbose=10)(delayed(_convert_hdf_tif_vnp15A2H)(hdf,tif) for hdf,tif in zip(basenames_a1,tiffnames1))
+            print(basenames_a1)
+            a1_reprojected = Parallel(n_jobs=24,verbose=10)(delayed(_convert_hdf_tif_vnp15A2H)(hdf,tif) for hdf,tif in zip(basenames_a1,tiffnames1))
         else:
-            Parallel(n_jobs=24,verbose=10)(delayed(_convert_hdf_tif_mod15A2H)(hdf,tif) for hdf,tif in zip(basenames_a1,tiffnames1))
+            a1_reprojected = Parallel(n_jobs=24,verbose=10)(delayed(_convert_hdf_tif_mod15A2H)(hdf,tif) for hdf,tif in zip(basenames_a1,tiffnames1))
         gc.collect()
-        print('################################################')
-        print('          WARPING {} TIF Files'.format(p1))
-        print('################################################')
-        tiffwarp1 = [fname.replace('.tif','_warped.tif') for fname in tiffnames1]
-        Parallel(n_jobs=12,verbose=10)(delayed(warp_to_wgs84)(fname) for fname in tiffnames1)
+        #        print('################################################')
+        #        print('          WARPING {} TIF Files'.format(p1))
+        #        print('################################################')
+        #        tiffwarp1 = [fname.replace('.tif','_warped.tif') for fname in tiffnames1]
+        #        Parallel(n_jobs=12,verbose=10)(delayed(warp_to_wgs84)(fname) for fname in tiffnames1)
+        
+        #        print('################################################')
+        #        print('        Merging {} Warped TIFS to File'.format(p1))
+        #        print('################################################')
+        #        pp = p1.split('.')[0] + '.A'
+        #        tiffm1 = [fname.replace('.tif','_warped.tif') for fname in tiffnames1]
+        #        tiffm1 = glob('{}{}{}.*_warped.tif'.format(pp,year, str(doy).zfill(3)))
+        #        merge_tile_data(tiffm1, mcd43a1_path)
+        #        gc.collect()
 
-        print('################################################')
-        print('        Merging {} Warped TIFS to File'.format(p1))
-        print('################################################')
-        pp = p1.split('.')[0] + '.A'
-        tiffm1 = [fname.replace('.tif','_warped.tif') for fname in tiffnames1]
-        tiffm1 = glob('{}{}{}.*_warped.tif'.format(pp,year, str(doy).zfill(3)))
-        merge_tile_data(tiffm1, mcd43a1_path)
-        gc.collect()
-
+        # merge all to lat lon grid
+        lai_tiles = [read_hdf_vnp15ah2(fname) for fname in tiffnames1] 
+        lai_merged = merge_arrays(lai_tiles)
+#        lai_merged.to_netcdf('lai_merged.nc')
+        #lai_merged.name = 'LAI'
+        lai = lai_merged.rio.reproject(target_crs,shape=(5000,10000),resampling=Resampling.bilinear)
         print('################################################')
         print('        Cleaning Up Files....')
         print('################################################')
-#        files = glob('{}.A{}{}.*.tif'.format(year, str(doy).zfill(3)))
+        #files = glob('{}.A{}{}.*.tif'.format(year, str(doy).zfill(3)))
         Parallel(n_jobs=12,verbose=10)(delayed(os.remove)(fname) for fname in basenames_a1)
         Parallel(n_jobs=12,verbose=10)(delayed(os.remove)(fname) for fname in tiffnames1)
-#        files =	glob('{}.A{}{}.*.tif'.format(p2.plyear, str(doy).zfill(3)))
-        Parallel(n_jobs=12,verbose=10)(delayed(os.remove)(fname) for fname in tiffwarp1)
-
+        #        files =	glob('{}.A{}{}.*.tif'.format(p2.plyear, str(doy).zfill(3)))
+#        Parallel(n_jobs=12,verbose=10)(delayed(os.remove)(fname) for fname in tiffwarp1)
+        
         # Print Cleaning up HDF files
         print('################################################')
         print('          Cleaning Up RAW HDF Files')
         print('################################################')
         #        Parallel(n_jobs=10,verbose=10)(delayed(os.remove)(fname) for fname in basenames_a1)
         #        Parallel(n_jobs=10,verbose=10)(delayed(os.remove)(fname) for fname in basenames_a2)
-
+        
         # write to netcdf
-        lai = xr.open_rasterio(mcd43a1_path)
-
+        #lai = xr.open_rasterio(mcd43a1_path)
+        lai.attrs['long-name'] = 'Leaf Area Index'
+        #lai.attrs['_FillValue'] = 0.
+        #lai.attrs['valid_range'] = [0,100]
+        #lai.attrs['scale_factor'] = 1
+        print('###############################################')
+        print( '                      writting file')
+        print('###############################################')
+        lai = lai.where(lai > 0,0)
         das = dict(lai=lai)
-        ds = xr.Dataset(das)
+        ds = xr.Dataset(das).rename(dict(x='longitude',y='latitude',band='level'))
+        ds['longitude'].attrs['long_name'] = 'longitude'
+        ds['longitude'].attrs['standard_name'] = 'longitude'
+        ds['longitude'].attrs['units'] = 'degrees_east'
+        ds['longitude'].attrs['axis'] = 'X'
+        ds['latitude'].attrs['long_name'] = 'latitude'
+        ds['latitude'].attrs['standard_name'] = 'latitude'
+        ds['latitude'].attrs['units'] = 'degrees_north'
+        ds['latitude'].attrs['axis'] = 'Y'
 
-        ds['time'] = date
+        d = pd.to_datetime('{}{}'.format(year,doy),format='%Y%j')
+        hours = (d - pd.to_datetime('{}'.format(year), format='%Y'))/ np.timedelta64(1,'h')
+        ds['time'] = hours
+        ds.time.attrs['standard_name'] = 'time'
+        ds.time.attrs['long_time'] = 'Time'
+        ds.time.attrs['units'] = pd.to_datetime('{}-01-01'.format(year),format='%Y-%m-%d').strftime('hours since %Y-%m-%d %H:%M:%S')
+        ds.time.attrs['calendar'] = 'standard'
         ds = ds.expand_dims('time').set_coords('time')
-        write_ncf(ds,mcd43a3_path.replace('.tif','.nc')
-
-    return mcd43a1_path.replace('.tif','.nc')
-
-
+        yyyymmdd = d.strftime('%Y%m%d')
+        newname = '{}_{}_{}.nc'.format(s,p1,yyyymmdd)
+        write_ncf(ds,newname)
+        return mcd43a1_path.replace('.tif','.nc')
+        
+                  
 def write_ncf(dset,output_name):
     print('Writing:', output_name)
     comp = dict(zlib=True,complevel=5)
     encoding = {}
     for i in dset.data_vars.keys():
         encoding[i] = comp
-    dset.attrs['github_url'] = 'https://github.com/bbakernoaa/dust_map'
-    dset.attrs['contact'] = 'barry.baker@noaa.gov, kerstin.schepanski@tropos.de'
+    dset.attrs['github_url'] = 'https://github.com/bbakernoaa/laimapper'
+    dset.attrs['contact'] = 'barry.baker@noaa.gov'
     dset.attrs['date_created'] = pd.to_datetime('today').strftime('%Y-%m-%d')
     dset.to_netcdf(output_name,encoding=encoding)
-
-def calc_bsmap(wns, snow, wns_max=0.04, wnsi_max=500):
-    w = wns.where(wns < wns_max).where(snow <1)
-    wnsi = (1/w).fillna(0)
-    wnsin = ((wnsi - wnsi.min())/(wnsi_max + wnsi.min())).fillna(0)
-    wnsin.name = 'BS_MAP'
-    wnsin.attrs['long_name'] = 'Baker-Schepanski Sediment Supply Map'
-    wnsin.attrs['units'] = 'None'
-    wnsin.attrs['_FillValue'] = -999
-    wnsin.attrs['valid_range'] = [0,1]
-    return wnsin.where(wnsin <= 1).where(wnsin > 0)
-
-def calc_wn(albedo,nbar):
-    wn = (1-albedo.where(albedo >=0)) / nbar
-    wn.name = 'shadow'
-    wn.attrs['long_name'] = 'Shadow'
-    wn.attrs['description'] = 'Chappel and Webb 2016, eq. 28'
-    wn.attrs['units'] = 'None'
-    return wn
-
-
-def calc_wns(wn,a=.0001,b = .1, minimum=0,maximum = 35):
-    wns = (a - b)* ( wn - maximum) / (minimum - maximum) + b
-    wns.name = 'wns'
-    wns.attrs['long_name'] = 'Normalized BRDF Albedo'
-    wns.attrs['description'] = 'Chappel and Webb 2016, eq. 8'
-    wns.attrs['units'] = 'None'
-    wns.attrs['_FillValue'] = -999
-    wns.attrs['valid_range'] = [0,1]
-    return wns.where(wns > 0).where(wns <=1)
 
 def download(user,passwd,fn):
     print("==========downloading:{}==========".format(fn))
@@ -225,71 +218,21 @@ def _convert_hdf_tif_vnp15A2H(hdf_file_name,tif_file_name):
     if len(s.subdatasets) < 1:
         iso = s.read().squeeze()
     else:
-        band = [i for i in s.subdatasets if 'Lai' in i][0]
-        iso = rio.open(band).read()[:,:,0].squeeze()
+        field = 'HDF5:{}://HDFEOS/GRIDS/VNP_Grid_VNP15A2H/Data_Fields/Lai'.format(hdf_file_name)
+        band = [i for i in s.subdatasets if field in i][0]
+#        print(rio.open(band).read().shape)
+        iso = rio.open(band).read().squeeze()
+        #iso = xr.open_rasterio(band)[0,:,:]
+    #iso.data = (iso.where((iso != iso.nodatavals) & (iso < 249)) * 0.1 + iso.offsets).data
+    #iso = iso.expand_dims('band')
+    #return iso
     write_array_tif(iso, crs, transform, tif_file_name)
 
-def _convert_hdf_tif_vnp43ia3(hdf_file_name,tif_file_name):
-    crs = '+proj=sinu +lon_0=0 +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs'
-    tile = hdf_file_name.split(".")[2]
-    h = int(tile[1:3])
-    v = int(tile[4:])
-    ulx = -20015109.354 + h * 1111950.5196666666
-    uly = -10007554.677 + (18 - v) * 1111950.5196666666
-    res = 463.312716527917
-    transform = from_origin(ulx - res / 2, uly - res / 2, res, res)
-#    print(hdf_file_name)
-    s =	rio.open(hdf_file_name)
-#    print(s,hdf_file_name)
-#    if len(s.subdatasets) < 1:
-#        albedo = s.read().squeeze()
-#    else:
-#        print(s.subdatasets)
-    band = [i for i in s.subdatasets if 'Albedo_BSA_I1' in i][0]
-    bandqc = [i for i in s.subdatasets if 'BRDF_Albedo_Band_Mandatory_Quality_I1' in i][0]
-    albedo = xr.open_rasterio(band).squeeze().where(xr.open_rasterio(bandqc) ==0).squeeze().data
-    write_array_tif(albedo, crs, transform, tif_file_name)
-
-
-def _convert_hdf_tif_mcd43a1(hdf_file_name, tif_file_name):
-    crs = '+proj=sinu +lon_0=0 +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs'
-    tile = hdf_file_name.split(".")[2]
-    h = int(tile[1:3])
-    v = int(tile[4:])
-    ulx = -20015109.354 + h * 1111950.5196666666
-    uly = -10007554.677 + (18 - v) * 1111950.5196666666
-    res = 463.312716527917
-    transform = from_origin(ulx - res / 2, uly - res / 2, res, res)
-    f = xr.open_dataset(hdf_file_name).rename({'YDim:MOD_Grid_BRDF':'y','XDim:MOD_Grid_BRDF':'x','Num_Parameters:MOD_Grid_BRDF':'n'})
-    iso = f.BRDF_Albedo_Parameters_Band1[:,:,0]
-    #iso = iso.where(f.BRDF_Albedo_Band_Mandatory_Quality_Band1 == 0)
-#    print(tif_file_name)
-    write_array_tif(iso.data, crs, transform, tif_file_name)
-#    print(tif_file_name)
-    return tif_file_name
-
-def _convert_hdf_tif_mcd43a3(hdf_file_name, tif_file_name):
-    crs = '+proj=sinu +lon_0=0 +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs'
-    tile = hdf_file_name.split(".")[2]
-    h = int(tile[1:3])
-    v = int(tile[4:])
-    ulx = -20015109.354 + h * 1111950.5196666666
-    uly = -10007554.677 + (18 - v) * 1111950.5196666666
-    res = 463.312716527917
-    transform = from_origin(ulx - res / 2, uly - res / 2, res, res)
-    f = xr.open_dataset(hdf_file_name).rename({'YDim:MOD_Grid_BRDF':'y','XDim:MOD_Grid_BRDF':'x'})
-    albedo = f.Albedo_BSA_Band1 # .where(f.BRDF_Albedo_Band_Mandatory_Quality_Band1 == 0)
-    write_array_tif(albedo.data, crs, transform, tif_file_name)
-
-def _convert_hdf_tif_mod10a2(hdf_file_name, tif_file_name):
-    crs = '+proj=sinu +lon_0=0 +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs'
-    tile = hdf_file_name.split(".")[2]
-    h = int(tile[1:3])
-    v = int(tile[4:])
-    ulx = -20015109.354 + h * 1111950.5196666666
-    uly = -10007554.677 + (18 - v) * 1111950.5196666666
-    res = 463.312716527917
-    transform = from_origin(ulx - res / 2, uly - res / 2, res, res)
-    f = xr.open_dataset(hdf_file_name)
-    c = f.Maximum_Snow_Extent.where(f.Maximum_Snow_Extent ==25) #clear of snow
-    write_array_tif(c.data, crs, transform, tif_file_name)
+def read_hdf_vnp15ah2(fname):
+    crs = "+proj=sinu +lon_0=0 +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs"
+    s = rio.open(fname)
+    #band = [i for i in s.subdatasets if "/Lai" in i][0]
+    iso = xr.open_rasterio(fname)
+    iso.data = (iso.where(( iso < 249)) * 0.1).data
+    iso.name = 'lai'
+    return iso
