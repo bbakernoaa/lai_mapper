@@ -97,7 +97,7 @@ if __name__ == "__main__":
                         help='NASA PASSWORD')
     parser.add_argument(
         '--satellite',
-        default='MOLA',
+        default='VIIRS',
         help='Satellite product: MOLA (AQUA), MOTA (TERRA), VIIRS')
     args = parser.parse_args()
 
