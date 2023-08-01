@@ -1,2 +1,2 @@
 # LAI_Mapper
-tool to create the Baker-Schepanski Sediment Supply Map
+tool to create the a global map of the VIIRS LAI 
