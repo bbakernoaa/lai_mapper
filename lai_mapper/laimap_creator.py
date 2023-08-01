@@ -93,7 +93,7 @@ if __name__ == "__main__":
                         help='NASA USERNAME')
     parser.add_argument('-p',
                         '--password',
-                        default='Tallguy1',
+                        default='PASSWORD',
                         help='NASA PASSWORD')
     parser.add_argument(
         '--satellite',
