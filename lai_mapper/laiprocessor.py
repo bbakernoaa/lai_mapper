@@ -218,7 +218,8 @@ def _convert_hdf_tif_vnp15A2H(hdf_file_name,tif_file_name):
     if len(s.subdatasets) < 1:
         iso = s.read().squeeze()
     else:
-        field = 'HDF5:{}://HDFEOS/GRIDS/VNP_Grid_VNP15A2H/Data_Fields/Lai'.format(hdf_file_name)
+        #field = 'HDF5:{}://HDFEOS/GRIDS/VNP_Grid_VNP15A2H/Data_Fields/Lai'.format(hdf_file_name)
+        field = 'HDF5:{}://HDFEOS/GRIDS/VIIRS_Grid_LAIFPAR/Data_Fields/Lai'.format(hdf_file_name)
         band = [i for i in s.subdatasets if field in i][0]
 #        print(rio.open(band).read().shape)
         iso = rio.open(band).read().squeeze()
@@ -230,7 +231,7 @@ def _convert_hdf_tif_vnp15A2H(hdf_file_name,tif_file_name):
 
 def read_hdf_vnp15ah2(fname):
     crs = "+proj=sinu +lon_0=0 +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs"
-    s = rio.open(fname)
+    #s = rio.open(fname)
     #band = [i for i in s.subdatasets if "/Lai" in i][0]
     iso = xr.open_rasterio(fname)
     iso.data = (iso.where(( iso < 249)) * 0.1).data
